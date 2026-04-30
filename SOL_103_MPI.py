@@ -91,19 +91,18 @@ for component in range(3):
     V_sub, sub_to_parent = V.sub(component).collapse()
     sub_coords = V_sub.tabulate_dof_coordinates()
 
-    # Only consider owned dofs — ghosts are some other rank's job
-    n_local = V_sub.dofmap.index_map.size_local
-    local_coords = sub_coords[:n_local]
 
-    if len(local_coords) == 0:
+    if len(sub_coords) == 0:
         continue
 
-    tree = cKDTree(local_coords)
+    tree = cKDTree(sub_coords)
     target_coords = node_coords[constrained_nodes]
     dists, closest = tree.query(target_coords)
 
     matched = closest[dists < 1e-6]
     parent_dofs = np.array(sub_to_parent, dtype=np.int32)[matched]
+    parent_dofs = np.sort(parent_dofs)
+    
     bc = dirichletbc(default_scalar_type(0), parent_dofs, V.sub(component))
     bcs.append(bc)
 
@@ -128,7 +127,7 @@ solver.setProblemType(SLEPc.EPS.ProblemType.GHEP)
 
 st = SLEPc.ST().create()
 st.setType(SLEPc.ST.Type.SINVERT)
-st.setShift(1.0)
+st.setShift(0.0)
 
 ksp = st.getKSP()
 ksp.setType('preonly')
