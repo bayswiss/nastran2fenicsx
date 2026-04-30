@@ -1,7 +1,12 @@
-"""
-Read a Nastran/OptiStruct .fem or .bdf file and return plain numpy arrays
-ready for DOLFINx.
-"""
+# Copyright (C) 2026 Antonio Baiano Svizzero
+#
+# This file is part of nastran2fenicsx (https://github.com/bayswiss/nastran2fenicsx)
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Read a Nastran/OptiStruct .fem or .bdf file and return plain numpy arrays
+# ready for DOLFINx.
+
 import numpy as np
 from pyNastran.bdf.bdf import BDF
 

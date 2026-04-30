@@ -1,3 +1,12 @@
+# Copyright (C) 2026 Antonio Baiano Svizzero
+#
+# This file is part of nastran2fenicsx (https://github.com/bayswiss/nastran2fenicsx)
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Modal analysis of a 3D structure with claped boundary
+
+
 from mpi4py import MPI
 from petsc4py import PETSc
 from slepc4py import SLEPc
@@ -102,7 +111,7 @@ for component in range(3):
     matched = closest[dists < 1e-6]
     parent_dofs = np.array(sub_to_parent, dtype=np.int32)[matched]
     parent_dofs = np.sort(parent_dofs)
-    
+
     bc = dirichletbc(default_scalar_type(0), parent_dofs, V.sub(component))
     bcs.append(bc)
 
