@@ -1,114 +1,163 @@
 """
 Read a Nastran/OptiStruct .fem or .bdf file and return plain numpy arrays
-ready for DOLFINx. No DOLFINx dependency here.
+ready for DOLFINx.
 """
 import numpy as np
 from pyNastran.bdf.bdf import BDF
 
-# Nastran element type -> (basix cell name, vertices per element, function space order)
+# Maps "<Nastran element type><node count>" to the corresponding
+# (basix cell name, vertices per element, function space order).
+# CTETRA10 and CHEXA20 are quadratic elements: we only keep the corner
+# vertices for the geometry and let DOLFINx add the midside nodes via
+# a higher-order function space.
 CELL_MAP = {
     "CTETRA4":  ("tetrahedron", 4, 1),
-    "CTETRA10": ("tetrahedron", 4, 2),   # 4 vertices for geometry, order 2 for function space
-    "CHEXA8":   ("hexahedron", 8, 1),
-    "CHEXA20":  ("hexahedron", 8, 2),
+    "CTETRA10": ("tetrahedron", 4, 2),
+    "CHEXA8":   ("hexahedron",  8, 1),
+    "CHEXA20":  ("hexahedron",  8, 2),
 }
 
 
-def read_fem(filename):
-    model = BDF(mode="optistruct")
+def flatten(card_list):
+    """Return a flat list of cards.
+
+    pyNastran sometimes wraps cards inside an inner list (e.g. when an
+    SPCADD or LOAD card combines several sets). This unwraps one level
+    so the caller can iterate cards uniformly.
+    """
+    out = []
+    for s in card_list:
+        if isinstance(s, list):
+            out.extend(s)
+        else:
+            out.append(s)
+    return out
+
+
+def spc_dofs(components):
+    """Convert a Nastran component string to 0-based translational DOFs.
+
+    Nastran encodes constrained DOFs as digits: 1,2,3 = translations in
+    x,y,z; 4,5,6 = rotations. We drop rotational DOFs (solid elements
+    don't have rotational DOFs) and shift to 0-based indexing.
+    Example: '123' -> [0, 1, 2].
+    """
+    return [int(c) - 1 for c in str(components) if c in "123"]
+
+
+def read_fem(filename, mode):
+    # Parse the deck. mode="optistruct" enables OptiStruct-specific cards.
+    model = BDF(mode=mode)
     model.read_bdf(filename)
 
     # --- Nodes ---
+    # Build a stable NID -> contiguous 0-based index mapping. Sorting
+    # makes the output reproducible across files where NIDs may be
+    # non-contiguous or out of order. coords[i] is the position of the
+    # node with NID nid_list[i].
     nid_list = sorted(model.nodes.keys())
     nid_to_idx = {nid: i for i, nid in enumerate(nid_list)}
-    coords = np.array([model.nodes[nid].get_position() for nid in nid_list])
+
+    coords = np.array(
+        [model.nodes[nid].get_position() for nid in nid_list],
+        dtype=np.float64,
+    )
 
     # --- Elements ---
+    # Walk all elements, keep only the ones whose type we support, and
+    # enforce a single cell type for the whole mesh (DOLFINx meshes
+    # cannot mix tets and hexes). For each kept element we store its
+    # connectivity (using the new 0-based indices) and the material ID
+    # of its property.
     cells = []
     cell_mat_ids = []
-    cell_type_key = None
+    cell_type_key = None  # locks in the cell type on the first valid element
 
     for eid in sorted(model.elements.keys()):
         elem = model.elements[eid]
-        etype = elem.type
         nids = elem.node_ids
-        nnodes = len(nids)
-        key = f"{etype}{nnodes}"
+        key = f"{elem.type}{len(nids)}"
 
+        # Skip element types we don't handle (bars, rigid links, shells, ...).
         if key not in CELL_MAP:
             continue
 
+        # Lock in the first supported cell type; reject any later element
+        # that doesn't match it.
         if cell_type_key is None:
             cell_type_key = key
         elif key != cell_type_key:
-            print(f"WARNING: skipping {key} element {eid}, only {cell_type_key} supported")
+            print(f"skipping {key} element {eid}, only {cell_type_key} supported")
             continue
 
-        basix_cell, n_verts, order = CELL_MAP[key]
+        # Keep only corner vertices for the geometry (see CELL_MAP comment).
+        n_verts = CELL_MAP[key][1]
+        cells.append([nid_to_idx[n] for n in nids[:n_verts]])
+        cell_mat_ids.append(model.properties[elem.pid].mid)
 
-        # Only take vertex nodes for geometry
-        vertex_ids = [nid_to_idx[nids[i]] for i in range(n_verts)]
-        cells.append(vertex_ids)
-
-        pid = elem.pid
-        prop = model.properties[pid]
-        mid = prop.mid
-        cell_mat_ids.append(mid)
+    if cell_type_key is None:
+        raise ValueError(f"No supported elements found in {filename}")
 
     cells = np.array(cells, dtype=np.int64)
     cell_mat_ids = np.array(cell_mat_ids, dtype=np.int32)
 
     # --- Materials ---
+    # Flatten each MAT card to the three properties we need downstream:
+    # Young's modulus, Poisson's ratio, density. Keyed by Nastran MID.
     materials = {}
-    for mid, mat in model.materials.items():
-        materials[mid] = {"E": mat.e, "nu": mat.nu, "rho": mat.rho}
+    for mid, m in model.materials.items():
+        materials[mid] = {"E": m.e, "nu": m.nu, "rho": m.rho}
 
-    # --- SPCs ---
+    # --- SPCs (single-point constraints, i.e. fixed DOFs) ---
+    # Output is a list of (node_index, dof) pairs with 0-based indices.
+    # SPC1 = same DOFs applied to many nodes.
+    # SPC  = per-node DOF spec, may include enforced displacements
+    #        (we ignore the enforced value and treat them as zero BCs).
     spcs = []
-    for spc_id, spc_list in model.spcs.items():
-        for spc_set in spc_list:
-            for spc_card in spc_set if isinstance(spc_set, list) else [spc_set]:
-                card_type = spc_card.type
-                if card_type == "SPC1":
-                    components = str(spc_card.components)
-                    for nid in spc_card.node_ids:
-                        if nid in nid_to_idx:
-                            for c in components:
-                                dof = int(c) - 1
-                                if dof < 3:
-                                    spcs.append((nid_to_idx[nid], dof))
-                elif card_type == "SPC":
-                    for nid, comp, _ in zip(spc_card.node_ids,
-                                            spc_card.components,
-                                            spc_card.enforced):
-                        if nid in nid_to_idx:
-                            for c in str(comp):
-                                dof = int(c) - 1
-                                if dof < 3:
-                                    spcs.append((nid_to_idx[nid], dof))
+    for spc_list in model.spcs.values():
+        for card in flatten(spc_list):
+            if card.type == "SPC1":
+                dofs = spc_dofs(card.components)
+                for nid in card.node_ids:
+                    if nid in nid_to_idx:
+                        idx = nid_to_idx[nid]
+                        for d in dofs:
+                            spcs.append((idx, d))
+            elif card.type == "SPC":
+                for nid, comp, _ in zip(card.node_ids, card.components, card.enforced):
+                    if nid in nid_to_idx:
+                        idx = nid_to_idx[nid]
+                        for d in spc_dofs(comp):
+                            spcs.append((idx, d))
 
     # --- Nodal forces ---
+    # Output is a list of (node_index, fx, fy, fz). scaled_vector already
+    # includes the FORCE card's magnitude, so no extra multiplication
+    # is needed. Distributed loads (PLOAD*, GRAV, ...) are ignored.
     forces = []
-    for load_id, load_list in model.loads.items():
-        for load_set in load_list:
-            for load_card in load_set if isinstance(load_set, list) else [load_set]:
-                if load_card.type == "FORCE":
-                    nid = load_card.node_id
-                    if nid in nid_to_idx:
-                        xyz = load_card.scaled_vector
-                        forces.append((nid_to_idx[nid], xyz[0], xyz[1], xyz[2]))
+    for load_list in model.loads.values():
+        for card in flatten(load_list):
+            if card.type == "FORCE" and card.node_id in nid_to_idx:
+                xyz = card.scaled_vector
+                forces.append((nid_to_idx[card.node_id], xyz[0], xyz[1], xyz[2]))
 
     # --- Pack ---
-    basix_cell, n_verts, element_order = CELL_MAP[cell_type_key]
+    # element_order drives the function space order on the DOLFINx side
+    # (1 for linear elements, 2 for quadratic).
+    basix_cell, _, element_order = CELL_MAP[cell_type_key]
 
     return {
         "coords": coords,
         "cells": cells,
         "cell_type": basix_cell,
-        "element_order": element_order,  # for function space (2 for CTETRA10)
+        "element_order": element_order,
         "cell_mat_ids": cell_mat_ids,
         "materials": materials,
         "spcs": spcs,
         "forces": forces,
         "nid_to_idx": nid_to_idx,
     }
+
+
+if __name__ == "__main__":
+    read_fem("beam.fem", mode="optistruct")
