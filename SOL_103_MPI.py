@@ -5,9 +5,11 @@ from dolfinx import mesh
 from dolfinx.fem import Function, functionspace, form, dirichletbc
 from dolfinx.fem.petsc import assemble_matrix
 from dolfinx.io import VTXWriter
+from dolfinx import default_scalar_type
 from ufl import dx, sym, grad, tr, inner, TrialFunction, TestFunction, Identity
 import basix
 import numpy as np
+from scipy.spatial import cKDTree
 
 from nastran2fenicsx import read_fem
 
@@ -89,17 +91,24 @@ for component in range(3):
     V_sub, sub_to_parent = V.sub(component).collapse()
     sub_coords = V_sub.tabulate_dof_coordinates()
 
-    constrained_dofs = []
-    for nidx in constrained_nodes:
-        dists = np.linalg.norm(sub_coords - node_coords[nidx], axis=1)
-        closest = np.argmin(dists)
-        if dists[closest] < 1e-6:
-            constrained_dofs.append(closest)
+    # Only consider owned dofs — ghosts are some other rank's job
+    n_local = V_sub.dofmap.index_map.size_local
+    local_coords = sub_coords[:n_local]
 
-    parent_dofs = np.array(sub_to_parent, dtype=np.int32)[constrained_dofs]
-    bc = dirichletbc(PETSc.ScalarType(0), parent_dofs, V.sub(component))
+    if len(local_coords) == 0:
+        continue
+
+    tree = cKDTree(local_coords)
+    target_coords = node_coords[constrained_nodes]
+    dists, closest = tree.query(target_coords)
+
+    matched = closest[dists < 1e-6]
+    parent_dofs = np.array(sub_to_parent, dtype=np.int32)[matched]
+    bc = dirichletbc(default_scalar_type(0), parent_dofs, V.sub(component))
     bcs.append(bc)
 
+
+        
 # Define and assemble matrices
 k = inner(sigma(u), epsilon(v)) * dx
 m = rho * inner(u, v) * dx
@@ -119,7 +128,7 @@ solver.setProblemType(SLEPc.EPS.ProblemType.GHEP)
 
 st = SLEPc.ST().create()
 st.setType(SLEPc.ST.Type.SINVERT)
-st.setShift(0.0)
+st.setShift(1.0)
 
 ksp = st.getKSP()
 ksp.setType('preonly')
