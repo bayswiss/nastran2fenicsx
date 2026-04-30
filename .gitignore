@@ -1,3 +1,10 @@
+*.step
+*.bp
+*.out
+*.bdf
+*.fem
+*.msh
+fields/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
