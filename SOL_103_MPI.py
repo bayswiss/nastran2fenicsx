@@ -97,18 +97,18 @@ for component in range(3):
     if not constrained_idx:
         continue
 
-    target = node_coords[constrained_idx]         # (M, 3)
+    target = node_coords[constrained_idx]         
     tree   = cKDTree(target)
 
-    # DOLFINx passes coordinates as (3, N); cKDTree wants (N, 3)
+
     def near_constraint(x, _tree=tree, _tol=1e-6):
         dists, _ = _tree.query(x.T)
         return dists < _tol
 
-    V_sub, _ = V.sub(component).collapse()   # space first, dof-map second (we don't need it)
+    V_sub, _ = V.sub(component).collapse()   
     
     parent_dofs, _ = locate_dofs_geometrical(
-        (V.sub(component), V_sub),           # (parent_subspace, collapsed_subspace) — both FunctionSpaces
+        (V.sub(component), V_sub),           
         near_constraint,
     )
     
