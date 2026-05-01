@@ -1,7 +1,6 @@
 *.step
 *.bp
 *.out
-*.bdf
 *.fem
 *.msh
 fields/

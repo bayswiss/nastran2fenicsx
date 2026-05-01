@@ -26,7 +26,7 @@ comm = MPI.COMM_WORLD
 
 # Read .fem on rank 0, broadcast to all ranks
 if comm.rank == 0:
-    data = read_fem("beam.fem", mode="optistruct")
+    data = read_fem("beam_1st.bdf", mode="msc")
 else:
     data = None
 data = comm.bcast(data, root=0)

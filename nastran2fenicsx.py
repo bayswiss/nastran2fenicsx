@@ -18,8 +18,8 @@ from pyNastran.bdf.bdf import BDF
 CELL_MAP = {
     "CTETRA4":  ("tetrahedron", 4, 1),
     "CTETRA10": ("tetrahedron", 4, 2),
-    "CHEXA8":   ("hexahedron",  8, 1),
-    "CHEXA20":  ("hexahedron",  8, 2),
+    # "CHEXA8":   ("hexahedron",  8, 1), <--- NOT TESTED
+    # "CHEXA20":  ("hexahedron",  8, 2), <--- NOT TESTED
 }
 
 
