@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Read a Nastran/OptiStruct .fem or .bdf file and return plain numpy arrays
+# Read .fem or .bdf solver deck and return plain numpy arrays
 # ready for DOLFINx.
 
 import numpy as np
@@ -51,7 +51,6 @@ def spc_dofs(components):
 
 
 def read_fem(filename, mode):
-    # Parse the deck. mode="optistruct" enables OptiStruct-specific cards.
     model = BDF(mode=mode)
     model.read_bdf(filename)
 
@@ -162,7 +161,3 @@ def read_fem(filename, mode):
         "forces": forces,
         "nid_to_idx": nid_to_idx,
     }
-
-
-if __name__ == "__main__":
-    read_fem("beam.fem", mode="optistruct")
