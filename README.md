@@ -1,6 +1,6 @@
 # nastran2fenicsx
 
-Read Nastran-style bulk data files (`.bdf`) and solve them with [DOLFINx](https://github.com/FEniCS/dolfinx) + SLEPc/PETSc.
+Read Nastran-style bulk data files (`.bdf`/`.fem`) and solve them with [DOLFINx](https://github.com/FEniCS/dolfinx) + SLEPc/PETSc.
 
 A small, MPI-ready tool that takes a Nastran-style bulk data file (`.bdf`), turns it into a DOLFINx mesh with material, boundary-condition and load data attached, and runs the analysis with FEniCSx + SLEPc/PETSc.
 
