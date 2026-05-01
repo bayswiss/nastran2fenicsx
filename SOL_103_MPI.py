@@ -86,9 +86,7 @@ def epsilon(u):
 def sigma(u):
     return lambda_ * tr(epsilon(u)) * Identity(len(u)) + 2 * mu * epsilon(u)
 
-# Dirichlet BCs: one per component, matching SPC nodes by coordinate
-# (the .fem gives us NIDs, not facet tags, so we match dof coords back to
-#  the original node positions)
+# Dirichlet BCs
 bcs = []
 node_coords = data["coords"]
 
