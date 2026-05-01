@@ -11,7 +11,7 @@ from mpi4py import MPI
 from petsc4py import PETSc
 from slepc4py import SLEPc
 from dolfinx import mesh 
-from dolfinx.fem import Function, functionspace, form, dirichletbc
+from dolfinx.fem import Function, functionspace, form, dirichletbc, locate_dofs_geometrical
 from dolfinx.fem.petsc import assemble_matrix
 from dolfinx.io import VTXWriter
 from dolfinx import default_scalar_type
@@ -93,25 +93,25 @@ bcs = []
 node_coords = data["coords"]
 
 for component in range(3):
-    constrained_nodes = [idx for idx, dof in data["spcs"] if dof == component]
-    if not constrained_nodes:
+    constrained_idx = [idx for idx, dof in data["spcs"] if dof == component]
+    if not constrained_idx:
         continue
 
-    V_sub, sub_to_parent = V.sub(component).collapse()
-    sub_coords = V_sub.tabulate_dof_coordinates()
+    target = node_coords[constrained_idx]         # (M, 3)
+    tree   = cKDTree(target)
 
+    # DOLFINx passes coordinates as (3, N); cKDTree wants (N, 3)
+    def near_constraint(x, _tree=tree, _tol=1e-6):
+        dists, _ = _tree.query(x.T)
+        return dists < _tol
 
-    if len(sub_coords) == 0:
-        continue
-
-    tree = cKDTree(sub_coords)
-    target_coords = node_coords[constrained_nodes]
-    dists, closest = tree.query(target_coords)
-
-    matched = closest[dists < 1e-6]
-    parent_dofs = np.array(sub_to_parent, dtype=np.int32)[matched]
-    parent_dofs = np.sort(parent_dofs)
-
+    V_sub, _ = V.sub(component).collapse()   # space first, dof-map second (we don't need it)
+    
+    parent_dofs, _ = locate_dofs_geometrical(
+        (V.sub(component), V_sub),           # (parent_subspace, collapsed_subspace) — both FunctionSpaces
+        near_constraint,
+    )
+    
     bc = dirichletbc(default_scalar_type(0), parent_dofs, V.sub(component))
     bcs.append(bc)
 
